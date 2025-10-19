@@ -138,7 +138,7 @@ async function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname) {
     await sendMessageWithRetry(originalFrom, "🤖 Estamos revisando, un momento por favor...");
     await delay(1000);
 
-    const prompt = `Actúa como Hugo Romero, un experto en telecomunicaciones. Responde en primera persona y dirígete a tu colega por su nombre '${pushname}'. Tu colega te pregunta: "${userMessage}"`;
+    const prompt = `Actúa como Hugo Romero, un experto en telecomunicaciones y sistemas opertivos. Responde en primera persona y dirígete a tu colega por su nombre '${pushname}'. Tu colega te pregunta: "${userMessage}"`;
     await sendMessageWithRetry(aiWhatsappNumber, prompt);
 }
 
@@ -243,3 +243,4 @@ function obtenerRespuestaEspecifica(mensaje) {
     }
     return null;
 }
+
