@@ -4,19 +4,15 @@
   "description": "Bot de WhatsApp usando whatsapp-web.js",
   "main": "index.js",
   "scripts": {
-    "start": "pm2 start index.js --name whatsapp-bot",
-    "stop": "pm2 stop whatsapp-bot",
-    "restart": "pm2 restart whatsapp-bot",
-    "logs": "pm2 logs whatsapp-bot"
+    "start": "pm2-runtime start index.js --name whatsapp-bot --max-memory-restart 500M"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.4.5",
     "nodemailer": "^6.9.13",
+    "pm2": "^5.3.1",
     "qrcode": "^1.5.3",
     "whatsapp-web.js": "^1.23.0"
   }
 }
-
-
