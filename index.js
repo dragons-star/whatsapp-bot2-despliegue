@@ -1,22 +1,31 @@
 require("dotenv").config();
-// CAMBIO: Importamos la nueva librería 'qrcode'
 const qrcode = require('qrcode');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const nodemailer = require("nodemailer");
 
 console.log("Iniciando el bot...");
 
+// --- Configuración del Cliente de WhatsApp (con optimizaciones de memoria) ---
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        // Argumentos para reducir el consumo de memoria en entornos como Render
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process', // <- Este es muy importante para reducir la RAM
+            '--disable-gpu'
+        ],
     }
 });
 
 // --- Eventos del Cliente de WhatsApp ---
-
-// CAMBIO IMPORTANTE: Ahora generamos una URL con la imagen del QR
+// Genera una URL con la imagen del QR para evitar errores en la consola
 client.on('qr', qr => {
     console.log("--------------------------------------------------");
     console.log("Se generó un código QR.");
@@ -25,7 +34,6 @@ client.on('qr', qr => {
         if (err) {
             console.error("Error al generar la URL del QR:", err);
         } else {
-            // Esto imprimirá una URL larga en los logs. Cópiala y pégala en el navegador.
             console.log(url);
             console.log("--------------------------------------------------");
         }
@@ -36,10 +44,6 @@ client.on('authenticated', () => { console.log('Autenticación exitosa.'); });
 client.on('ready', () => { console.log('¡Cliente de WhatsApp listo y conectado!'); });
 
 // --- Lógica Principal del Bot ---
-
-// (Aquí va el resto de tu código, desde client.on('message'...) hasta el final)
-// Lo incluyo completo abajo para que no haya dudas.
-
 client.on('message', async message => {
     if (message.fromMe) return;
 
@@ -117,14 +121,9 @@ let lastGreetingTime = {};
 const COOLDOWN_PERIOD_MS = 60 * 60 * 1000; 
 
 const gruposPermitidos = [
-  "573124138249-1633615578@g.us",
-  "573144117449-1420163618@g.us",
-  "1579546575@g.us",
-  "1390082199@g.us",
-  "1410194235@g.us",
-  "120363043316977258@g.us",
-  "120363042095724140@g.us",
-  "120363420822895904@g.us"
+  "573124138249-1633615578@g.us", "573144117449-1420163618@g.us", "1579546575@g.us",
+  "1390082199@g.us", "1410194235@g.us", "120363043316977258@g.us",
+  "120363042095724140@g.us", "120363420822895904@g.us"
 ];
 const respuestasPorGrupo = {
     "573124138249-1633615578@g.us": {
