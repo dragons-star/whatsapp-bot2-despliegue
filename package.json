@@ -1,10 +1,14 @@
+// ARCHIVO: package.json
 {
   "name": "whatsapp-bot-client",
   "version": "1.0.0",
   "description": "Bot de WhatsApp usando whatsapp-web.js",
   "main": "index.js",
   "scripts": {
-    "start": "node --max_old_space_size=480 index.js"
+    "start": "pm2 start node --max_old_space_size=500 index.js --name whatsapp-bot",
+    "stop": "pm2 stop whatsapp-bot",
+    "restart": "pm2 restart whatsapp-bot",
+    "logs": "pm2 logs whatsapp-bot"
   },
   "author": "",
   "license": "ISC",
@@ -15,8 +19,3 @@
     "whatsapp-web.js": "^1.23.0"
   }
 }
-
-
-
-
-
