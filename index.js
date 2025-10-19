@@ -180,17 +180,15 @@ const respuestasPorGrupo = {
     },
 };
 
-// SOLUCIÓN PARA EL CORREO: Configuración más robusta para Nodemailer
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 465, // Usar puerto 465 con SSL
-    secure: true, // Requerido para el puerto 465
+    port: 465,
+    secure: true,
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
     },
     tls: {
-      // No fallar en certificados inválidos (útil en algunos entornos de nube)
       rejectUnauthorized: false
     }
 });
@@ -228,7 +226,8 @@ function esSaludo(mensaje) {
 function puedeSaludar(from, pushname) {
     const uniqueKey = `${from}_${pushname}`;
     const currentTime = new Date().getTime();
-    if (!lastGreetingTime[uniqueKey] || currentTime - lastGreetingTime[unique-key] > COOLDOWN_PERIOD_MS) {
+    // AQUI ESTABA EL ERROR: Se corrigió 'unique-key' por 'uniqueKey'
+    if (!lastGreetingTime[uniqueKey] || currentTime - lastGreetingTime[uniqueKey] > COOLDOWN_PERIOD_MS) {
         lastGreetingTime[uniqueKey] = currentTime;
         return true;
     }
