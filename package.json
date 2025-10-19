@@ -4,7 +4,7 @@
   "description": "Bot de WhatsApp usando whatsapp-web.js",
   "main": "index.js",
   "scripts": {
-    "start": "node --max_old_space_size=480 index.js"
+    "start": "node --max_old_space_size=500 index.js"
   },
   "author": "",
   "license": "ISC",
@@ -15,6 +15,7 @@
     "whatsapp-web.js": "^1.23.0"
   }
 }
+
 
 
 
