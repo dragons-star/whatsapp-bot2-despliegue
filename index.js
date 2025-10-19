@@ -24,8 +24,6 @@ const client = new Client({
 });
 
 // --- Eventos del Cliente de WhatsApp ---
-
-// Genera una URL con la imagen del QR para evitar errores en la consola
 client.on('qr', qr => {
     console.log("--------------------------------------------------");
     console.log("Se generó un código QR.");
@@ -48,7 +46,6 @@ client.on('ready', () => {
     console.log('¡Cliente de WhatsApp listo y conectado!');
 });
 
-// Manejo de desconexiones para intentar recuperar la sesión
 client.on('disconnected', (reason) => {
     console.log('¡Cliente desconectado!', reason);
     console.log('Intentando reiniciar la sesión...');
@@ -82,22 +79,21 @@ client.on('message', async message => {
 
         const isGroup = chat.isGroup;
         const tuNumero = client.info.wid.user;
-
-        console.log(`\n--- NUEVO MENSAJE de ${pushname} en ${from}: "${originalMessage}"`);
-
         const mentions = await message.getMentions();
         const meMencionaron = mentions.some(mention => mention.id.user === tuNumero);
         const respuestaEspecifica = obtenerRespuestaEspecifica(originalMessage);
         const esUnSaludoSimple = esSaludo(originalMessage);
 
+        console.log(`\n--- NUEVO MENSAJE de ${pushname} en ${from}: "${originalMessage}"`);
+
         if ((isGroup && gruposPermitidos.includes(from)) || !isGroup) {
             if (respuestaEspecifica) {
                 console.log("Lógica: Coincidencia con diccionario encontrada.");
                 await sendMessageWithRetry(from, respuestaEspecifica);
-                if (isGroup) enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
+                if (isGroup) await enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
             } else if (meMencionaron) {
                 console.log(`Lógica: Mención para IA detectada.`);
-                if (isGroup) enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
+                if (isGroup) await enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
                 await consultarIA_via_WhatsApp(originalMessage, from, pushname);
             } else if (esUnSaludoSimple && puedeSaludar(from, pushname)) {
                 console.log("Lógica: Saludo simple y personalizado detectado.");
@@ -113,12 +109,10 @@ client.initialize();
 
 // --- FUNCIONES DE AYUDA ---
 
-// Función para añadir una pausa
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
 async function sendMessageWithRetry(to, text) {
     try {
-        // Acortamos el log para que no sea tan largo
         console.log(`Intentando enviar a ${to}: "${text.substring(0, 70)}..."`);
         await client.sendMessage(to, text);
         console.log("Mensaje enviado exitosamente.");
@@ -133,7 +127,6 @@ async function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname) {
         await sendMessageWithRetry(originalFrom, "La IA no está configurada.");
         return;
     }
-
     if (isAwaitingAIReply) {
         await sendMessageWithRetry(originalFrom, "🧑‍💻 Por favor un momento, estoy con otra consulta.");
         return;
@@ -142,14 +135,9 @@ async function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname) {
     isAwaitingAIReply = true;
     pendingQueryInfo = { from: originalFrom, pushname: pushname };
 
-    // 1. Enviar mensaje de espera al usuario
     await sendMessageWithRetry(originalFrom, "🤖 Estamos revisando, un momento por favor...");
-
-    // 2. LA MODIFICACIÓN CLAVE: Esperar 1 segundo para darle un respiro al sistema
-    console.log("Haciendo una pausa de 1 segundo antes de contactar a la IA...");
     await delay(1000);
 
-    // 3. Formular y enviar el prompt a la IA
     const prompt = `Actúa como Hugo Romero, un experto en telecomunicaciones. Responde en primera persona y dirígete a tu colega por su nombre '${pushname}'. Tu colega te pregunta: "${userMessage}"`;
     await sendMessageWithRetry(aiWhatsappNumber, prompt);
 }
@@ -161,9 +149,14 @@ let lastGreetingTime = {};
 const COOLDOWN_PERIOD_MS = 60 * 60 * 1000;
 
 const gruposPermitidos = [
-    "573124138249-1633615578@g.us", "573144117449-1420163618@g.us", "1579546575@g.us",
-    "1390082199@g.us", "1410194235@g.us", "120363043316977258@g.us",
-    "120363042095724140@g.us", "120363420822895904@g.us"
+    "573124138249-1633615578@g.us",
+    "573144117449-1420163618@g.us",
+    "1579546575@g.us",
+    "1390082199@g.us",
+    "1410194235@g.us",
+    "120363043316977258@g.us",
+    "120363042095724140@g.us",
+    "120363420822895904@g.us"
 ];
 
 const respuestasPorGrupo = {
@@ -187,21 +180,31 @@ const respuestasPorGrupo = {
     },
 };
 
+// SOLUCIÓN PARA EL CORREO: Configuración más robusta para Nodemailer
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    port: 465, // Usar puerto 465 con SSL
+    secure: true, // Requerido para el puerto 465
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      // No fallar en certificados inválidos (útil en algunos entornos de nube)
+      rejectUnauthorized: false
+    }
 });
 
 const palabrasSaludo = ["hola", "saludos", "viejo Hugo", "buen dia", "buenas", "buenas tardes", "buenas noches", "buenos dias"];
 
-function enviarEmail(to, subject, text) {
+async function enviarEmail(to, subject, text) {
     const mailOptions = { from: process.env.EMAIL_USER, to, subject, text };
-    transporter.sendMail(mailOptions, (error, info) => {
-        if (error) console.log("Error enviando email: ", error);
-        else console.log("Email enviado: " + info.response);
-    });
+    try {
+        let info = await transporter.sendMail(mailOptions);
+        console.log("Email enviado: " + info.response);
+    } catch (error) {
+        console.error("Error enviando email:", error);
+    }
 }
 
 function normalizarTexto(texto) {
@@ -225,7 +228,7 @@ function esSaludo(mensaje) {
 function puedeSaludar(from, pushname) {
     const uniqueKey = `${from}_${pushname}`;
     const currentTime = new Date().getTime();
-    if (!lastGreetingTime[uniqueKey] || currentTime - lastGreetingTime[uniqueKey] > COOLDOWN_PERIOD_MS) {
+    if (!lastGreetingTime[uniqueKey] || currentTime - lastGreetingTime[unique-key] > COOLDOWN_PERIOD_MS) {
         lastGreetingTime[uniqueKey] = currentTime;
         return true;
     }
