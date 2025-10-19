@@ -1,6 +1,6 @@
 require("dotenv").config();
 const qrcode = require('qrcode');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js'); // Añadimos MessageMedia por si acaso
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const nodemailer = require("nodemailer");
 
 console.log("Iniciando el bot...");
@@ -10,145 +10,109 @@ const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
+        // Argumentos para reducir el consumo de memoria en entornos como Render
         args: [
-            '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote',
-            '--single-process', '--disable-gpu'
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process', // <- Este es muy importante para reducir la RAM
+            '--disable-gpu'
         ],
     }
 });
 
 // --- Eventos del Cliente de WhatsApp ---
+// Genera una URL con la imagen del QR para evitar errores en la consola
 client.on('qr', qr => {
     console.log("--------------------------------------------------");
     console.log("Se generó un código QR.");
     console.log("Copia el SIGUIENTE enlace completo en tu navegador para verlo y escanearlo:");
     qrcode.toDataURL(qr, (err, url) => {
-        if (err) { console.error("Error al generar la URL del QR:", err); } 
-        else { console.log(url); console.log("--------------------------------------------------"); }
+        if (err) {
+            console.error("Error al generar la URL del QR:", err);
+        } else {
+            console.log(url);
+            console.log("--------------------------------------------------");
+        }
     });
 });
 
 client.on('authenticated', () => { console.log('Autenticación exitosa.'); });
 client.on('ready', () => { console.log('¡Cliente de WhatsApp listo y conectado!'); });
 
-// NUEVO: Manejo de desconexiones para intentar recuperar la sesión
-client.on('disconnected', (reason) => {
-    console.log('¡Cliente desconectado!', reason);
-    console.log('Intentando reconectar en 30 segundos...');
-    setTimeout(() => {
-        client.initialize();
-    }, 30000); // Intenta reiniciar después de 30 segundos
-});
-
 // --- Lógica Principal del Bot ---
 client.on('message', async message => {
-    try {
-        if (message.fromMe) return;
+    if (message.fromMe) return;
 
-        const contact = await message.getContact();
-        const chat = await message.getChat();
-        const originalMessage = message.body || '';
-        const from = message.from || '';
-        const pushname = contact.pushname || 'Desconocido';
+    const contact = await message.getContact();
+    const chat = await message.getChat();
 
-        if (!originalMessage || !from) return;
+    const originalMessage = message.body || '';
+    const from = message.from || '';
+    const pushname = contact.pushname || 'Desconocido';
 
-        const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER; 
-        if (from === aiWhatsappNumber) {
-            console.log(`Respuesta recibida de la IA: "${originalMessage}"`);
-            if (isAwaitingAIReply && pendingQueryInfo) {
-                const { from: originalFrom, pushname: originalPushname } = pendingQueryInfo;
-                const responseWithSignature = `*Para ${originalPushname}:*\n${originalMessage}`;
-                await sendMessageWithRetry(originalFrom, responseWithSignature);
+    if (!originalMessage || !from) return;
 
-                const contextKey = `${originalFrom}_${originalPushname}`;
-                conversationContext[contextKey] = { lastMessage: originalMessage, timestamp: Date.now() };
+    const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER; 
+    if (from === aiWhatsappNumber) {
+        console.log(`Respuesta recibida de la IA: "${originalMessage}"`);
+        if (isAwaitingAIReply && pendingQueryInfo) {
+            const { from: originalFrom, pushname: originalPushname } = pendingQueryInfo;
+            const responseWithSignature = `*Para ${originalPushname}:*\n${originalMessage}`;
+            client.sendMessage(originalFrom, responseWithSignature);
 
-                isAwaitingAIReply = false;
-                pendingQueryInfo = null;
-                console.log(`IA ahora está 'disponible'.`);
-            }
-            return;
+            const contextKey = `${originalFrom}_${originalPushname}`;
+            conversationContext[contextKey] = { lastMessage: originalMessage, timestamp: Date.now() };
+
+            isAwaitingAIReply = false;
+            pendingQueryInfo = null;
+            console.log(`IA ahora está 'disponible'.`);
         }
+        return;
+    }
 
-        const isGroup = chat.isGroup;
-        const tuNumero = client.info.wid.user;
+    const isGroup = chat.isGroup;
+    const tuNumero = client.info.wid.user;
 
-        console.log(`\n--- NUEVO MENSAJE ---`);
-        console.log(`Recibido de ${pushname} en ${from}: "${originalMessage}"`);
+    console.log(`\n--- NUEVO MENSAJE ---`);
+    console.log(`Recibido de ${pushname} en ${from}: "${originalMessage}"`);
 
-        const fueMencionado = await message.getMentions();
-        const meMencionaron = fueMencionado.some(mention => mention.id.user === tuNumero);
-        const respuestaEspecifica = obtenerRespuestaEspecifica(originalMessage);
-        const esUnSaludoSimple = esSaludo(originalMessage);
-        const contextKey = `${from}_${pushname}`;
+    const fueMencionado = await message.getMentions();
+    const meMencionaron = fueMencionado.some(mention => mention.id.user === tuNumero);
+    const respuestaEspecifica = obtenerRespuestaEspecifica(originalMessage);
+    const esUnSaludoSimple = esSaludo(originalMessage);
+    const contextKey = `${from}_${pushname}`;
 
-        if ((isGroup && gruposPermitidos.includes(from)) || !isGroup) {
-            if (conversationContext[contextKey] && (Date.now() - conversationContext[contextKey].timestamp < CONTEXT_TIMEOUT)) {
-                const history = `Mi última respuesta a ${pushname} fue: "${conversationContext[contextKey].lastMessage}"`;
-                delete conversationContext[contextKey]; 
-                await consultarIA_via_WhatsApp(originalMessage, from, pushname, history);
-            } else if (respuestaEspecifica) {
-                console.log("Lógica: Coincidencia con diccionario encontrada.");
-                await sendMessageWithRetry(from, respuestaEspecifica);
-                if (isGroup) {
-                    enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
-                }
-            } else if (meMencionaron) {
-                 console.log(`Lógica: Mención para IA detectada de ${pushname}.`);
-                if (isGroup) {
-                    enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
-                }
-                await consultarIA_via_WhatsApp(originalMessage, from, pushname);
-            } else if (esUnSaludoSimple && puedeSaludar(from, pushname)) {
-                console.log("Lógica: Saludo simple y personalizado detectado.");
-                await sendMessageWithRetry(from, obtenerSaludo(pushname));
+    if ((isGroup && gruposPermitidos.includes(from)) || !isGroup) {
+        if (conversationContext[contextKey] && (Date.now() - conversationContext[contextKey].timestamp < CONTEXT_TIMEOUT)) {
+            const history = `Mi última respuesta a ${pushname} fue: "${conversationContext[contextKey].lastMessage}"`;
+            delete conversationContext[contextKey]; 
+            consultarIA_via_WhatsApp(originalMessage, from, pushname, history);
+        } else if (respuestaEspecifica) {
+            console.log("Lógica: Coincidencia con diccionario encontrada.");
+            client.sendMessage(from, respuestaEspecifica);
+            if (isGroup) {
+                enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
             }
+        } else if (meMencionaron) {
+             console.log(`Lógica: Mención para IA detectada de ${pushname}.`);
+            if (isGroup) {
+                enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
+            }
+            consultarIA_via_WhatsApp(originalMessage, from, pushname);
+        } else if (esUnSaludoSimple && puedeSaludar(from, pushname)) {
+            console.log("Lógica: Saludo simple y personalizado detectado.");
+            client.sendMessage(from, obtenerSaludo(pushname));
         }
-    } catch (error) {
-        console.error("Error grave en el evento 'message':", error);
     }
 });
 
 client.initialize();
 
 // --- FUNCIONES DE AYUDA Y CONFIGURACIONES GLOBALES ---
-
-// NUEVO: Función de envío robusta con reintentos
-async function sendMessageWithRetry(to, text) {
-    try {
-        console.log(`Intentando enviar a ${to}: "${text}"`);
-        await client.sendMessage(to, text);
-        console.log("Mensaje enviado exitosamente.");
-    } catch (error) {
-        console.error(`Error al enviar mensaje a ${to}:`, error);
-        // Podríamos añadir lógica de reintento aquí si quisiéramos
-    }
-}
-
-async function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname, conversationHistory = "") {
-    const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER;
-    if (!aiWhatsappNumber) { 
-        await sendMessageWithRetry(originalFrom, "La IA no está configurada."); 
-        return; 
-    }
-    if (isAwaitingAIReply) { 
-        await sendMessageWithRetry(originalFrom, "🧑‍💻 Por favor un momento, estoy con otra consulta."); 
-        return; 
-    }
-    isAwaitingAIReply = true;
-    pendingQueryInfo = { from: originalFrom, pushname: pushname };
-    const prompt = `Actúa como Hugo Romero, un experto en telecomunicaciones. Responde en primera persona y dirígete a tu colega por su nombre. La conversación anterior fue: "${conversationHistory}". Ahora, tu colega '${pushname}' te pregunta: "${userMessage}"`;
-    
-    console.log(`Enviando a la IA (${aiWhatsappNumber}): "${prompt}"`);
-    await sendMessageWithRetry(aiWhatsappNumber, prompt); 
-    
-    if (!conversationHistory) {
-        await sendMessageWithRetry(originalFrom, "🤖 Estamos revisando, un momento por favor...");
-    }
-}
-
 let isAwaitingAIReply = false;
 let pendingQueryInfo = null;
 let conversationContext = {}; 
@@ -163,15 +127,21 @@ const gruposPermitidos = [
 ];
 const respuestasPorGrupo = {
     "573124138249-1633615578@g.us": {
-    "caídas las ingestas": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.", "tenemos degradación": "Se procederá a revisar internamente.",
+    "caídas las ingestas": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "tenemos degradación": "Se procederá a revisar internamente.",
     "pixelados": "Procederemos a revisarlo.", "pixelaciones": "Procederemos a revisarlo.",
-    "afectación en": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.", "degradación de ingestas": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
-    "notamos el enlace intermitente": "Se procederá a revisar, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.", "favor de verificar": "Se procederá a revisar, un momento por favor mientras lo revisamos.",
-    "pixelaciones en los": "Se procederá a revisar al interno de manera prioritaria, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.", "sin trafico": "Se procederá a revisar al interno de manera prioritaria, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "afectación en": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "degradación de ingestas": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "notamos el enlace intermitente": "Se procederá a revisar, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "favor de verificar": "Se procederá a revisar, un momento por favor mientras lo revisamos.",
+    "pixelaciones en los": "Se procederá a revisar al interno de manera prioritaria, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
+    "sin trafico": "Se procederá a revisar al interno de manera prioritaria, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
     "degradacíon": "Se procederá a revisar al interno, por favor en paralelo escalarlo al equipo de GSOC para que nos indiquen los ID´s de las rutas.",
     },
     "573144117449-1420163618@g.us": {
-    "viejo Hugo": "Ok enterado, procedere", "Buenos días compañeros cómo va todo": "Buen día todo en orden hasta el momento", "afectación de servicio": "procederemos a revisarlo, un momento por favor",
+    "viejo Hugo": "Ok enterado, procedere",
+    "Buenos días compañeros cómo va todo": "Buen día todo en orden hasta el momento",
+    "afectación de servicio": "procederemos a revisarlo, un momento por favor",
     },
 };
 const transporter = nodemailer.createTransport({
@@ -179,10 +149,21 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
 });
 
+function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname, conversationHistory = "") {
+    const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER;
+    if (!aiWhatsappNumber) { client.sendMessage(originalFrom, "La IA no está configurada."); return; }
+    if (isAwaitingAIReply) { client.sendMessage(originalFrom, "🧑‍💻 Por favor un momento, estoy con otra consulta."); return; }
+    isAwaitingAIReply = true;
+    pendingQueryInfo = { from: originalFrom, pushname: pushname };
+    const prompt = `Actúa como Hugo Romero, un experto en telecomunicaciones. Responde en primera persona y dirígete a tu colega por su nombre. La conversación anterior fue: "${conversationHistory}". Ahora, tu colega '${pushname}' te pregunta: "${userMessage}"`;
+    client.sendMessage(aiWhatsappNumber, prompt); 
+    if (!conversationHistory) client.sendMessage(originalFrom, "🤖 Estamos revisando, un momento por favor...");
+}
 function enviarEmail(to, subject, text) {
   const mailOptions = { from: process.env.EMAIL_USER, to, subject, text };
   transporter.sendMail(mailOptions, (error, info) => {
-    if (error) console.log("Error enviando email: ", error); else console.log("Email enviado: " + info.response);
+    if (error) console.log("Error enviando email: ", error);
+    else console.log("Email enviado: " + info.response);
   });
 }
 function normalizarTexto(texto) {
