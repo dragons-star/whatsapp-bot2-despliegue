@@ -1,11 +1,11 @@
 require("dotenv").config();
-const qrcode = require('qrcode-terminal');
+// CAMBIO: Importamos la nueva librería 'qrcode'
+const qrcode = require('qrcode');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const nodemailer = require("nodemailer");
 
 console.log("Iniciando el bot...");
 
-// --- Configuración del Cliente de WhatsApp ---
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -14,13 +14,108 @@ const client = new Client({
     }
 });
 
-// --- Lógica de la App (sin cambios) ---
+// --- Eventos del Cliente de WhatsApp ---
+
+// CAMBIO IMPORTANTE: Ahora generamos una URL con la imagen del QR
+client.on('qr', qr => {
+    console.log("--------------------------------------------------");
+    console.log("Se generó un código QR.");
+    console.log("Copia el SIGUIENTE enlace completo en tu navegador para verlo y escanearlo:");
+    qrcode.toDataURL(qr, (err, url) => {
+        if (err) {
+            console.error("Error al generar la URL del QR:", err);
+        } else {
+            // Esto imprimirá una URL larga en los logs. Cópiala y pégala en el navegador.
+            console.log(url);
+            console.log("--------------------------------------------------");
+        }
+    });
+});
+
+client.on('authenticated', () => { console.log('Autenticación exitosa.'); });
+client.on('ready', () => { console.log('¡Cliente de WhatsApp listo y conectado!'); });
+
+// --- Lógica Principal del Bot ---
+
+// (Aquí va el resto de tu código, desde client.on('message'...) hasta el final)
+// Lo incluyo completo abajo para que no haya dudas.
+
+client.on('message', async message => {
+    if (message.fromMe) return;
+
+    const contact = await message.getContact();
+    const chat = await message.getChat();
+
+    const originalMessage = message.body || '';
+    const from = message.from || '';
+    const pushname = contact.pushname || 'Desconocido';
+
+    if (!originalMessage || !from) return;
+
+    const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER; 
+    if (from === aiWhatsappNumber) {
+        console.log(`Respuesta recibida de la IA: "${originalMessage}"`);
+        if (isAwaitingAIReply && pendingQueryInfo) {
+            const { from: originalFrom, pushname: originalPushname } = pendingQueryInfo;
+            const responseWithSignature = `*Para ${originalPushname}:*\n${originalMessage}`;
+            client.sendMessage(originalFrom, responseWithSignature);
+
+            const contextKey = `${originalFrom}_${originalPushname}`;
+            conversationContext[contextKey] = { lastMessage: originalMessage, timestamp: Date.now() };
+
+            isAwaitingAIReply = false;
+            pendingQueryInfo = null;
+            console.log(`IA ahora está 'disponible'.`);
+        }
+        return;
+    }
+
+    const isGroup = chat.isGroup;
+    const tuNumero = client.info.wid.user;
+
+    console.log(`\n--- NUEVO MENSAJE ---`);
+    console.log(`Recibido de ${pushname} en ${from}: "${originalMessage}"`);
+
+    const fueMencionado = await message.getMentions();
+    const meMencionaron = fueMencionado.some(mention => mention.id.user === tuNumero);
+    const respuestaEspecifica = obtenerRespuestaEspecifica(originalMessage);
+    const esUnSaludoSimple = esSaludo(originalMessage);
+    const contextKey = `${from}_${pushname}`;
+
+    if ((isGroup && gruposPermitidos.includes(from)) || !isGroup) {
+        if (conversationContext[contextKey] && (Date.now() - conversationContext[contextKey].timestamp < CONTEXT_TIMEOUT)) {
+            const history = `Mi última respuesta a ${pushname} fue: "${conversationContext[contextKey].lastMessage}"`;
+            delete conversationContext[contextKey]; 
+            consultarIA_via_WhatsApp(originalMessage, from, pushname, history);
+        } else if (respuestaEspecifica) {
+            console.log("Lógica: Coincidencia con diccionario encontrada.");
+            client.sendMessage(from, respuestaEspecifica);
+            if (isGroup) {
+                enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
+            }
+        } else if (meMencionaron) {
+             console.log(`Lógica: Mención para IA detectada de ${pushname}.`);
+            if (isGroup) {
+                enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
+            }
+            consultarIA_via_WhatsApp(originalMessage, from, pushname);
+        } else if (esUnSaludoSimple && puedeSaludar(from, pushname)) {
+            console.log("Lógica: Saludo simple y personalizado detectado.");
+            client.sendMessage(from, obtenerSaludo(pushname));
+        }
+    }
+});
+
+client.initialize();
+
+// --- FUNCIONES DE AYUDA Y CONFIGURACIONES GLOBALES ---
 let isAwaitingAIReply = false;
 let pendingQueryInfo = null;
 let conversationContext = {}; 
 const CONTEXT_TIMEOUT = 3 * 60 * 1000;
 let lastGreetingTime = {};
 const COOLDOWN_PERIOD_MS = 60 * 60 * 1000; 
+
 const gruposPermitidos = [
   "573124138249-1633615578@g.us",
   "573144117449-1420163618@g.us",
@@ -55,67 +150,6 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
 });
 
-// --- Eventos del Cliente de WhatsApp ---
-client.on('qr', qr => {
-    console.log("¡Se generó un código QR! Escanéalo con tu teléfono desde WhatsApp > Dispositivos Vinculados.");
-    // LA LÍNEA MÁS IMPORTANTE: { small: true } hace que el QR quepa en la consola.
-    qrcode.generate(qr, { small: true });
-});
-
-client.on('authenticated', () => { console.log('Autenticación exitosa.'); });
-client.on('ready', () => { console.log('¡Cliente de WhatsApp listo y conectado!'); });
-
-client.on('message', async message => {
-    if (message.fromMe) return;
-    const contact = await message.getContact();
-    const chat = await message.getChat();
-    const originalMessage = message.body || '';
-    const from = message.from || '';
-    const pushname = contact.pushname || 'Desconocido';
-    if (!originalMessage || !from) return;
-
-    const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER; 
-    if (from === aiWhatsappNumber) {
-        if (isAwaitingAIReply && pendingQueryInfo) {
-            const { from: originalFrom, pushname: originalPushname } = pendingQueryInfo;
-            const responseWithSignature = `*Para ${originalPushname}:*\n${originalMessage}`;
-            client.sendMessage(originalFrom, responseWithSignature);
-            const contextKey = `${originalFrom}_${originalPushname}`;
-            conversationContext[contextKey] = { lastMessage: originalMessage, timestamp: Date.now() };
-            isAwaitingAIReply = false;
-            pendingQueryInfo = null;
-        }
-        return;
-    }
-
-    const isGroup = chat.isGroup;
-    const tuNumero = client.info.wid.user;
-    const fueMencionado = await message.getMentions();
-    const meMencionaron = fueMencionado.some(mention => mention.id.user === tuNumero);
-    const respuestaEspecifica = obtenerRespuestaEspecifica(originalMessage);
-    const esUnSaludoSimple = esSaludo(originalMessage);
-    const contextKey = `${from}_${pushname}`;
-
-    if ((isGroup && gruposPermitidos.includes(from)) || !isGroup) {
-        if (conversationContext[contextKey] && (Date.now() - conversationContext[contextKey].timestamp < CONTEXT_TIMEOUT)) {
-            const history = `Mi última respuesta a ${pushname} fue: "${conversationContext[contextKey].lastMessage}"`;
-            delete conversationContext[contextKey]; 
-            consultarIA_via_WhatsApp(originalMessage, from, pushname, history);
-        } else if (respuestaEspecifica) {
-            client.sendMessage(from, respuestaEspecifica);
-            if (isGroup) enviarEmail("hugo.romero@claro.com.co", `Reporte de '${originalMessage}'`, `Mensaje de ${pushname} en ${from}: ${originalMessage}`);
-        } else if (meMencionaron) {
-            if (isGroup) enviarEmail("hugo.romero@claro.com.co", `Mención para IA en ${from}`, `Mensaje de ${pushname}: ${originalMessage}`);
-            consultarIA_via_WhatsApp(originalMessage, from, pushname);
-        } else if (esUnSaludoSimple && puedeSaludar(from, pushname)) {
-            client.sendMessage(from, obtenerSaludo(pushname));
-        }
-    }
-});
-
-client.initialize();
-
-// --- FUNCIONES DE AYUDA ---
 function consultarIA_via_WhatsApp(userMessage, originalFrom, pushname, conversationHistory = "") {
     const aiWhatsappNumber = process.env.AI_WHATSAPP_NUMBER;
     if (!aiWhatsappNumber) { client.sendMessage(originalFrom, "La IA no está configurada."); return; }
